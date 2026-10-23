@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout SIIG
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Clone siig-rules
         run: git clone --depth 1 https://github.com/yv3000/siig-rules.git /tmp/siig-rules
