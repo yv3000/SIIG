@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yv3000/siig/cache"
@@ -17,7 +19,7 @@ func resetFlags(t *testing.T) {
 
 	clear := func() {
 		dryRun, check, targets, verbose = false, false, "", false
-		offline, noCache, clearCache = false, false, false
+		offline, noCache, clearCache, jsonOut = false, false, false, false
 	}
 	clear()
 	t.Cleanup(clear)
@@ -147,4 +149,46 @@ func chdir(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
+}
+
+func TestRunSiig_jsonDryRunOffline(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+
+	resetFlags(t)
+	dryRun = true
+	offline = true
+	jsonOut = true
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	runErr := runSiig(rootCmd, nil)
+	w.Close()
+	os.Stdout = old
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	buf := make([]byte, 1<<16)
+	n, _ := r.Read(buf)
+	raw := string(buf[:n])
+	var report jsonReport
+	if err := json.Unmarshal([]byte(raw), &report); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, raw)
+	}
+	if report.Version != version.Version {
+		t.Fatalf("version = %q, want %q", report.Version, version.Version)
+	}
+	if report.Stacks == nil || report.OnlineStacks == nil || report.ScanErrors == nil || report.Targets == nil {
+		t.Fatalf("nil slice in report: %+v", report)
+	}
+	if strings.Contains(raw, "\x1b[") {
+		t.Fatal("JSON path must not include ANSI escapes")
+	}
 }
