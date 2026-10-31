@@ -119,6 +119,7 @@ $ siig --verbose
 siig                          # Auto-detect stack and populate ignore files
 siig --dry-run                # Preview what would be added — nothing written
 siig --check                  # Exit 1 if ignore files are missing entries (for CI)
+siig --json                   # One JSON object on stdout instead of the human summary
 siig --verbose                # Show every rule applied, every entry added
 siig --targets git,docker     # Only populate specific targets
 siig --offline                # Skip network — use embedded rules and cache only
@@ -506,6 +507,23 @@ Run `siig --no-cache`. Cached rules are skipped for that run and every unknown s
 
 **Can I run SIIG in CI?**
 Yes — `siig` exits with code 0 on success, non-zero on error. Use `siig --check` to fail the job when the ignore files are missing entries (it writes nothing), and `siig --offline` if you don't want any outbound network calls.
+
+Add `--json` to get one machine-readable object on stdout instead of the summary, so a job can post or archive the result without scraping text:
+
+```json
+{
+  "version": "2.0.2",
+  "stacks": ["Docker", "Go"],
+  "onlineStacks": [],
+  "targets": [
+    {"target": "gitignore", "file": ".gitignore", "entriesAdded": 23, "skipped": false, "reason": ""},
+    {"target": "npmignore", "file": ".npmignore", "entriesAdded": 0, "skipped": true, "reason": "not applicable for this project"}
+  ],
+  "scanErrors": []
+}
+```
+
+`file` is always relative to the project — SIIG never puts your directory layout into a CI log. `--json` writes what it reports unless you also pass `--dry-run`, and `--json --check` still exits 1 while entries are missing (the error goes to stderr, the JSON to stdout).
 
 **How do I add a custom stack?**
 Open a PR to [siig-rules](https://github.com/yv3000/siig-rules) adding a JSON file to `db/` following the schema in [CONTRIBUTING.md](https://github.com/yv3000/siig-rules/blob/main/CONTRIBUTING.md).

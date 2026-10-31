@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `siig --json` — one machine-readable object on stdout (`version`, `stacks`, `onlineStacks`, `targets`, `scanErrors`) instead of the human summary, for CI jobs that need to report what changed. `file` is always relative to the project, so no local directory layout reaches a CI log; `--json --check` still exits 1 while entries are missing, with the error on stderr. Thanks to @yoreva-01 (#50, #45).
+
 ## 2.0.2 — 2026-10-31
 
 ### Added
