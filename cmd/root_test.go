@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ func resetFlags(t *testing.T) {
 
 	clear := func() {
 		dryRun, check, targets, verbose = false, false, "", false
-		offline, noCache, clearCache = false, false, false
+		offline, noCache, clearCache, jsonOut = false, false, false, false
 	}
 	clear()
 	t.Cleanup(clear)
@@ -203,4 +204,75 @@ func chdir(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
+}
+
+func TestRunSiig_jsonOutput(t *testing.T) {
+	t.Run("dry-run emits valid JSON with bare filenames", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		chdir(t, dir)
+		isolateHome(t)
+
+		resetFlags(t)
+		dryRun = true
+		offline = true
+		jsonOut = true
+
+		var runErr error
+		raw := captureStdout(t, func() {
+			runErr = runSiig(rootCmd, nil)
+		})
+		if runErr != nil {
+			t.Fatal(runErr)
+		}
+		if strings.Contains(raw, "\x1b[") {
+			t.Fatal("JSON output must not include ANSI escapes")
+		}
+		var report jsonReport
+		if err := json.Unmarshal([]byte(raw), &report); err != nil {
+			t.Fatalf("stdout is not JSON: %v\n%s", err, raw)
+		}
+		if report.Version != version.Version {
+			t.Fatalf("version = %q, want %q", report.Version, version.Version)
+		}
+		if report.Stacks == nil || report.OnlineStacks == nil || report.ScanErrors == nil || report.Targets == nil {
+			t.Fatalf("nil slice in report: %+v", report)
+		}
+		for _, row := range report.Targets {
+			if filepath.IsAbs(row.File) || strings.Contains(row.File, dir) {
+				t.Fatalf("target %q leaked absolute path in File = %q", row.Target, row.File)
+			}
+		}
+	})
+
+	t.Run("check fails while still writing valid JSON", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		chdir(t, dir)
+		isolateHome(t)
+
+		resetFlags(t)
+		check = true
+		offline = true
+		jsonOut = true
+
+		var runErr error
+		raw := captureStdout(t, func() {
+			runErr = runSiig(rootCmd, nil)
+		})
+		if runErr == nil {
+			t.Fatal("--json --check should return an error when entries are missing")
+		}
+		var report jsonReport
+		if err := json.Unmarshal([]byte(raw), &report); err != nil {
+			t.Fatalf("stdout is not JSON on --check failure: %v\n%s", err, raw)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".gitignore")); err == nil {
+			t.Fatal("--json --check must not write .gitignore")
+		}
+	})
 }

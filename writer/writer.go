@@ -93,7 +93,7 @@ func WriteAll(projectRoot string, matchResult *matcher.MatchResult, dryRun bool)
 func writeIgnoreFile(filePath string, entries []string, target matcher.Target, dryRun bool) WriteResult {
 	result := WriteResult{
 		Target:   target,
-		FilePath: filePath,
+		FilePath: filepath.Base(filePath),
 	}
 
 	existing := readIgnoreFile(filePath)
@@ -209,7 +209,7 @@ func readIgnoreFile(filePath string) ignoreFile {
 func writeVSCodeSettings(filePath string, excludes map[string]bool, dryRun bool) WriteResult {
 	result := WriteResult{
 		Target:   matcher.TargetVSCode,
-		FilePath: filePath,
+		FilePath: ".vscode/settings.json",
 	}
 
 	// read existing settings

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -19,6 +20,7 @@ import (
 var (
 	dryRun     bool
 	check      bool
+	jsonOut    bool
 	targets    string
 	verbose    bool
 	offline    bool
@@ -43,6 +45,7 @@ Zero config. One command. No more leaked secrets.`,
 func init() {
 	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be added without writing")
 	rootCmd.Flags().BoolVar(&check, "check", false, "Fail (exit 1) if ignore files are missing entries, without writing")
+	rootCmd.Flags().BoolVar(&jsonOut, "json", false, "Write one JSON object to stdout instead of the human summary")
 	rootCmd.Flags().StringVar(&targets, "targets", "", "Comma-separated targets to populate (git,vercel,docker,npm,vscode)")
 	rootCmd.Flags().BoolVar(&verbose, "verbose", false, "Print every file checked and rule applied")
 	rootCmd.Flags().BoolVar(&offline, "offline", false, "Skip all network requests, use embedded rules and cache only")
@@ -89,7 +92,9 @@ func runSiig(cmd *cobra.Command, args []string) error {
 	}
 
 	// print paths the scanner could not read
-	output.PrintScanErrors(scanResult)
+	if !jsonOut {
+		output.PrintScanErrors(scanResult)
+	}
 
 	var allowedTargets []matcher.Target
 	if targets != "" {
@@ -111,15 +116,17 @@ func runSiig(cmd *cobra.Command, args []string) error {
 
 	// report what was applied — including rules fetched from siig-rules, which
 	// the scan alone cannot know about
-	output.PrintDetected(matchResult)
-	if len(matchResult.DetectedNames)+len(matchResult.OnlineNames) == 0 {
-		// still apply global rules
-		fmt.Println("Applying global rules only...")
-	}
+	if !jsonOut {
+		output.PrintDetected(matchResult)
+		if len(matchResult.DetectedNames)+len(matchResult.OnlineNames) == 0 {
+			// still apply global rules
+			fmt.Println("Applying global rules only...")
+		}
 
-	// verbose output
-	if verbose {
-		output.PrintVerbose(scanResult, matchResult)
+		// verbose output
+		if verbose {
+			output.PrintVerbose(scanResult, matchResult)
+		}
 	}
 
 	// 4. write to target files (--check never writes)
@@ -127,6 +134,17 @@ func runSiig(cmd *cobra.Command, args []string) error {
 	writeResults := writer.WriteAll(cwd, matchResult, noWrite)
 
 	// 5. print results
+	if jsonOut {
+		if err := printJSONReport(scanResult, matchResult, writeResults); err != nil {
+			return err
+		}
+		if check {
+			if missing := pendingEntries(writeResults); missing > 0 {
+				return fmt.Errorf("ignore files are out of date: %d entries missing (run `siig` to add them)", missing)
+			}
+		}
+		return nil
+	}
 	switch {
 	case check:
 		output.PrintCheck(writeResults)
@@ -168,4 +186,52 @@ func hasApplicableTargets(result *matcher.MatchResult) bool {
 		}
 	}
 	return false
+}
+
+// jsonTarget is one row of the machine-readable report.
+type jsonTarget struct {
+	Target       string `json:"target"`
+	File         string `json:"file"`
+	EntriesAdded int    `json:"entriesAdded"`
+	Skipped      bool   `json:"skipped"`
+	Reason       string `json:"reason"`
+}
+
+type jsonReport struct {
+	Version      string       `json:"version"`
+	Stacks       []string     `json:"stacks"`
+	OnlineStacks []string     `json:"onlineStacks"`
+	Targets      []jsonTarget `json:"targets"`
+	ScanErrors   []string     `json:"scanErrors"`
+}
+
+func printJSONReport(scanResult *scanner.ScanResult, matchResult *matcher.MatchResult, writeResults []writer.WriteResult) error {
+	report := jsonReport{
+		Version:      version.Version,
+		Stacks:       matchResult.DetectedNames,
+		OnlineStacks: matchResult.OnlineNames,
+		ScanErrors:   scanResult.ScanErrors,
+	}
+	if report.Stacks == nil {
+		report.Stacks = []string{}
+	}
+	if report.OnlineStacks == nil {
+		report.OnlineStacks = []string{}
+	}
+	if report.ScanErrors == nil {
+		report.ScanErrors = []string{}
+	}
+	report.Targets = make([]jsonTarget, 0, len(writeResults))
+	for _, r := range writeResults {
+		report.Targets = append(report.Targets, jsonTarget{
+			Target:       string(r.Target),
+			File:         r.FilePath,
+			EntriesAdded: r.EntriesAdded,
+			Skipped:      r.Skipped,
+			Reason:       r.SkipReason,
+		})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(report)
 }
